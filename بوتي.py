@@ -3,10 +3,6 @@ import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ✅ تشغيل مستمر لمنع توقف البوت
-from keep_alive import keep_alive
-keep_alive()
-
 BOT_TOKEN = "8599216793:AAEC-SXCW-jJCTzFNWgz67rHSe9-hiWhkv0"
 CHANNEL_ID = -1003464951799
 ADMIN_ID = 6494650596
