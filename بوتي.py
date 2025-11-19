@@ -1,5 +1,6 @@
 import sqlite3
 import asyncio
+from collections import deque
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -86,10 +87,9 @@ async def check_subscription(user_id, context):
             return False
     return True
 
-# ✅ أمر /start للتحقق من الاشتراك
+# ✅ أوامر الإدارة
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 1: التحقق من وجود المستخدم الفعال 🌟
-    if update.effective_user is None:
+    if not update or not update.effective_user:
         return
 
     user_id = update.effective_user.id
@@ -107,38 +107,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ مرحبًا بك! يمكنك الآن استخدام البوت بحرية.")
 
-# ✅ أمر /chn لإضافة أو حذف قناة
 async def chn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 2: التحقق من وجود المستخدم الفعال 🌟
-    if update.effective_user is None:
+    if not update or not update.effective_user:
         return
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ هذا الأمر مخصص للإدمن فقط.")
         return
-
     if len(context.args) != 1:
         await update.message.reply_text("❌ استخدم الأمر هكذا: /chn @username")
         return
-
     username = context.args[0]
     result = save_channel(username)
     await update.message.reply_text(result)
 
-# ✅ أمر /add لإضافة فيلم
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 3: التحقق من وجود المستخدم الفعال 🌟
-    if update.effective_user is None:
+    if not update or not update.effective_user:
         return
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ هذا الأمر مخصص للإدمن فقط.")
         return
-
     if len(context.args) < 2:
         await update.message.reply_text("❌ استخدم الأمر هكذا: /add اسم_الفيلم رقم_الرسالة")
         return
-
     name = " ".join(context.args[:-1])
     try:
         message_id = int(context.args[-1])
@@ -147,48 +139,38 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ رقم الرسالة غير صحيح")
 
-# ✅ أمر /dis لحذف فيلم
 async def dis_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 4: التحقق من وجود المستخدم الفعال 🌟
-    if update.effective_user is None:
+    if not update or not update.effective_user:
         return
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ هذا الأمر مخصص للإدمن فقط.")
         return
-
     if len(context.args) < 1:
         await update.message.reply_text("❌ استخدم الأمر هكذا: /dis اسم_الفيلم")
         return
-
     name = " ".join(context.args)
     if delete_movie(name):
         await update.message.reply_text(f"✅ تم حذف الفيلم: {name}")
     else:
         await update.message.reply_text("❌ هذا الفيلم غير موجود في قاعدة البيانات.")
 
-# ✅ أمر /sher للنشر العام مع تأخير
 async def sher_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 5: التحقق من وجود المستخدم الفعال 🌟
-    if update.effective_user is None:
+    if not update or not update.effective_user:
         return
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ هذا الأمر مخصص للإدمن فقط.")
         return
-
     if len(context.args) < 1:
         await update.message.reply_text("❌ استخدم الأمر هكذا: /sher رسالتك هنا")
         return
-
     message = " ".join(context.args)
-
     try:
         with open("users.txt", "r") as f:
             user_ids = f.read().splitlines()
     except FileNotFoundError:
         user_ids = []
-
     count = 0
     for uid in user_ids:
         try:
@@ -197,13 +179,40 @@ async def sher_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.05)
         except:
             pass
-
     await update.message.reply_text(f"✅ تم إرسال الرسالة إلى {count} مستخدم.")
 
-# ✅ التعامل مع الرسائل
+# ✅ قائمة الانتظار
+queue = deque()
+semaphore = asyncio.Semaphore(5)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🌟 التعديل 6: التحقق من وجود المستخدم الفعال (الأهم) 🌟
-    if update.effective_user is None:
+    queue.append((update, context))
+
+async def process_queue():
+    while True:
+        if queue:
+            update, context = queue.popleft()
+            asyncio.create_task(process_request(update, context))
+        await asyncio.sleep(0.1)
+
+async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with semaphore:
+        task = asyncio.create_task(actual_work(update, context))
+
+        async def notify_wait():
+            await asyncio.sleep(10)
+            if not task.done():
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="⏳ جاري المعالجة"
+                )
+
+        asyncio.create_task(notify_wait())
+        await task
+
+async def actual_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ تحقق أن هناك مستخدم فعلي
+    if not update or not update.effective_user:
         return
 
     user_id = update.effective_user.id
@@ -246,4 +255,7 @@ app.add_handler(CommandHandler("sher", sher_command))
 app.add_handler(CommandHandler("chn", chn_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-app.run_polling()
+# تشغيل قائمة الانتظار في الخلفية
+app.job_queue.run_once(lambda ctx: asyncio.create_task(process_queue()), when=0)
+
+app.run_polling
